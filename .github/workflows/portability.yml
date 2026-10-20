@@ -1,0 +1,64 @@
+name: portability
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+      - "tests/**"
+      - "scripts/verify_portability.py"
+      - "scripts/verify_base_install.py"
+      - "scripts/verify_feature_simulation.py"
+      - ".github/workflows/portability.yml"
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+      - "tests/**"
+      - "scripts/verify_portability.py"
+      - "scripts/verify_base_install.py"
+      - "scripts/verify_feature_simulation.py"
+      - ".github/workflows/portability.yml"
+
+jobs:
+  base-cli:
+    name: ${{ matrix.os }} / base install
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install base package only
+        run: python -m pip install .
+      - name: Verify commands without optional integrations
+        run: python scripts/verify_base_install.py
+
+  acceptance:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install all supported optional integrations
+        run: python -m pip install ".[workflow,memory,agents,subscription-langchain]"
+      - name: Run complete test suite
+        run: python -m unittest discover -s tests -v
+      - name: Run portability acceptance
+        run: python scripts/verify_portability.py
+      - name: Run non-destructive feature simulation
+        run: python scripts/verify_feature_simulation.py

@@ -1,0 +1,30 @@
+# Local runtime and user data
+.venv/
+.bootstrap-venv/
+.python/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+state/
+runtime/
+data/
+tasks/
+knowledge/
+reports/
+backups/
+
+# Local secrets and generated provider configuration
+.env
+.env.*
+!.env.example
+secrets/
+generated/
+.agent-hub/
+config/skills.json
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db

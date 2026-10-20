@@ -1,0 +1,45 @@
+{
+  "modules": [
+    {
+      "description": "제한된 자가개선 후보 관찰",
+      "enabled": true,
+      "name": "improvement-observer",
+      "providers": [
+        "codex",
+        "claude",
+        "antigravity"
+      ]
+    },
+    {
+      "description": "범위 분리 지식그물 저장소",
+      "enabled": true,
+      "name": "knowledge-mesh",
+      "providers": [
+        "codex",
+        "claude",
+        "antigravity"
+      ]
+    },
+    {
+      "description": "공통 원장 기반 오케스트레이터 전환 지침",
+      "enabled": true,
+      "name": "orchestration-handoff",
+      "providers": [
+        "codex",
+        "claude",
+        "antigravity"
+      ]
+    },
+    {
+      "description": "공용 스킬 메타데이터 검색 및 설명서",
+      "enabled": true,
+      "name": "skill-registry",
+      "providers": [
+        "codex",
+        "claude",
+        "antigravity"
+      ]
+    }
+  ],
+  "schema_version": 1
+}

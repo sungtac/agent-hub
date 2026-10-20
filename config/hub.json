@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "owner_mode": "owner-only",
+  "sharing": "disabled",
+  "default_scope": "quarantine",
+  "runtime_directories": [
+    "runtime/state",
+    "runtime/tasks",
+    "runtime/knowledge",
+    "runtime/reports",
+    "runtime/backups"
+  ]
+}

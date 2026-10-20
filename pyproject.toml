@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-hub"
+version = "0.1.0"
+description = "Provider-independent local agent harness"
+readme = "README.md"
+requires-python = ">=3.11,<4.0"
+license = {text = "MIT"}
+authors = [{name = "Agent Hub Owner"}]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+[project.scripts]
+agent-hub = "agent_hub.cli:main"
+
+[project.optional-dependencies]
+workflow = ["langgraph==1.2.15", "langgraph-checkpoint-sqlite==3.1.2"]
+memory = ["langmem==0.0.30"]
+agents = ["deepagents==0.7.25"]
+subscription-langchain = ["langchain-core==1.6.10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.unittest]
+start-directory = "tests"
