@@ -7,10 +7,13 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+
+from .file_lock import exclusive_lock
 
 
 SCOPES = {"company", "personal", "shared", "quarantine"}
@@ -29,25 +32,31 @@ class KnowledgeStore:
         if not self.root.is_dir():
             raise ValueError("Knowledge root must already exist.")
         self.index_path = self.root / "index.sqlite3"
+        # One store-wide advisory lock serialises every read-modify-write so a
+        # mutating op cannot clobber a concurrent one or desync the .md files
+        # against the sqlite index.
+        self.lock_path = self.root / ".knowledge.lock"
         self._initialise_index()
 
     def save(self, scope: str, identifier: str, content: str) -> Path:
         self._validate(scope, identifier, content)
-        directory = self.root / scope / identifier
-        if directory.exists():
-            raise ValueError("Knowledge item already exists; use update.")
-        directory.mkdir(parents=True)
-        return self._write_version(scope, identifier, content, 1)
+        with exclusive_lock(self.lock_path):
+            directory = self.root / scope / identifier
+            if directory.exists():
+                raise ValueError("Knowledge item already exists; use update.")
+            directory.mkdir(parents=True)
+            return self._write_version(scope, identifier, content, 1)
 
     def update(self, scope: str, identifier: str, content: str) -> Path:
         self._validate(scope, identifier, content)
-        directory = self.root / scope / identifier
-        if not directory.is_dir() or (directory / "tombstone.json").exists():
-            raise ValueError("Active knowledge item does not exist.")
-        versions = self._versions(directory)
-        if not versions:
-            raise ValueError("Knowledge item has no active version.")
-        return self._write_version(scope, identifier, content, max(versions) + 1)
+        with exclusive_lock(self.lock_path):
+            directory = self.root / scope / identifier
+            if not directory.is_dir() or (directory / "tombstone.json").exists():
+                raise ValueError("Active knowledge item does not exist.")
+            versions = self._versions(directory)
+            if not versions:
+                raise ValueError("Knowledge item has no active version.")
+            return self._write_version(scope, identifier, content, max(versions) + 1)
 
     def promote(self, source_scope: str, identifier: str, target_scope: str) -> Path:
         """Explicit owner action; no automatic crossing between knowledge scopes."""
@@ -58,24 +67,25 @@ class KnowledgeStore:
 
     def delete(self, scope: str, identifier: str) -> Path:
         self._validate(scope, identifier, "placeholder")
-        directory = self.root / scope / identifier
-        document = self._latest_document(directory)
-        if document is None:
-            raise ValueError("Knowledge item does not exist.")
-        digest = hashlib.sha256(document.read_bytes()).hexdigest()
-        tombstone = directory / "tombstone.json"
-        if tombstone.exists():
-            raise ValueError("Knowledge item is already deleted.")
-        tombstone.write_text(
-            json.dumps({"scope": scope, "id": identifier, "deleted_at": now(), "content_sha256": digest}, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        for version in self._versions(directory):
-            source = directory / f"v{version}.md"
-            source.rename(directory / f"v{version}.deleted")
-        with self._connection() as connection:
-            connection.execute("UPDATE knowledge SET status = 'deleted', content = '' WHERE scope = ? AND identifier = ?", (scope, identifier))
-        return tombstone
+        with exclusive_lock(self.lock_path):
+            directory = self.root / scope / identifier
+            document = self._latest_document(directory)
+            if document is None:
+                raise ValueError("Knowledge item does not exist.")
+            digest = hashlib.sha256(document.read_bytes()).hexdigest()
+            tombstone = directory / "tombstone.json"
+            if tombstone.exists():
+                raise ValueError("Knowledge item is already deleted.")
+            self._atomic_write(
+                tombstone,
+                json.dumps({"scope": scope, "id": identifier, "deleted_at": now(), "content_sha256": digest}, ensure_ascii=False, indent=2) + "\n",
+            )
+            for version in self._versions(directory):
+                source = directory / f"v{version}.md"
+                source.rename(directory / f"v{version}.deleted")
+            with self._connection() as connection:
+                connection.execute("UPDATE knowledge SET status = 'deleted', content = '' WHERE scope = ? AND identifier = ?", (scope, identifier))
+            return tombstone
 
     def read(self, scope: str, identifier: str) -> str:
         self._validate(scope, identifier, "placeholder")
@@ -104,9 +114,9 @@ class KnowledgeStore:
         directory = self.root / scope / identifier
         document = directory / f"v{version}.md"
         timestamp = now()
-        document.write_text(
+        self._atomic_write(
+            document,
             f"---\nid: {identifier}\nscope: {scope}\nversion: {version}\nstatus: active\nupdated_at: {timestamp}\n---\n\n{content.strip()}\n",
-            encoding="utf-8",
         )
         with self._connection() as connection:
             connection.execute(
@@ -142,6 +152,22 @@ class KnowledgeStore:
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _atomic_write(destination: Path, text: str) -> None:
+        """Write via a same-directory temp file and os.replace so a crash can
+        never leave a truncated document behind."""
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=destination.parent, delete=False) as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+                temporary = Path(stream.name)
+            os.replace(temporary, destination)
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
 
     @staticmethod
     def _validate(scope: str, identifier: str, content: str) -> None:

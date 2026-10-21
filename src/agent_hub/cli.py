@@ -340,7 +340,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = ledger.complete_task(args.task_id, args.evidence)
             else:
                 raise AssertionError("unreachable task parser state")
-        except (ConfigurationError, LedgerError, StopIteration) as error:
+        except (ConfigurationError, LedgerError, StopIteration, RuntimeError, ValueError, FileNotFoundError) as error:
             raise SystemExit(str(error)) from error
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
@@ -594,7 +594,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     fingerprint = source_fingerprint(root)
                     # A failed/empty draft must be retryable.  Only a durable draft
                     # suppresses a repeated model discovery for unchanged inputs.
-                    if any(item.get("fingerprint") == fingerprint and item.get("status") in {"pending", "awaiting_approval", "promoted"} for item in state["drafts"].values()):
+                    # ``return_to_design`` is terminal for an unchanged fingerprint:
+                    # a reviewer already rejected the design, so re-discovering,
+                    # re-drafting, and re-dispatching both reviewers for the same
+                    # source would loop forever until the source itself changes.
+                    if any(item.get("fingerprint") == fingerprint and item.get("status") in {"pending", "awaiting_approval", "promoted", "return_to_design"} for item in state["drafts"].values()):
                         result = {"status": "already_scanned", "fingerprint": fingerprint}
                     else:
                         retry = next((item for item in state["drafts"].values() if item.get("fingerprint") == fingerprint and item.get("status") == "review_pending"), None)
