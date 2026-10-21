@@ -135,3 +135,16 @@ class ProtectedPathPolicyTests(unittest.TestCase):
         for module in ("multiagent_improvement", "improvement_review", "observer", "discovery", "provider_gateway", "scheduler", "subscription_policy", "natural_language", "file_lock"):
             self.assertTrue(requires_approval({f"src/agent_hub/{module}.py": ""}), module)
         self.assertFalse(requires_approval({"src/agent_hub/value.py": ""}))
+
+    def test_package_initialiser_requires_owner_approval(self) -> None:
+        from agent_hub.sandbox import requires_approval
+
+        # __init__.py executes on every agent_hub import and can monkeypatch
+        # any protected module, so it must never auto-promote.
+        self.assertTrue(requires_approval({"src/agent_hub/__init__.py": "import agent_hub.sandbox\n"}))
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "src" / "agent_hub").mkdir(parents=True)
+            (root / "src" / "agent_hub" / "__init__.py").write_text("", encoding="utf-8")
+            with self.assertRaises(PermissionError):
+                SandboxImprovementRunner._validate_changes(root, {"src/agent_hub/__init__.py": "x = 1\n"})

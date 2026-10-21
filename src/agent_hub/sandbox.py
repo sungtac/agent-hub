@@ -58,6 +58,9 @@ PROTECTED_FILES = {
     "src/agent_hub/subscription_langchain.py",
     "src/agent_hub/subscription_memory.py",
     "src/agent_hub/subscription_policy.py",
+    # The package initialiser runs before every module above is imported, so
+    # an unreviewed edit to it could rebind any protected policy at runtime.
+    "src/agent_hub/__init__.py",
 }
 
 
