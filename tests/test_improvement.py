@@ -29,3 +29,25 @@ class ImprovementQueueTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 queue.propose("tests", "different retry", "same failed area", now)
             self.assertEqual("tests", queue.propose("tests", "retry later", "cooldown elapsed", now.replace(day=2)).area)
+
+
+def _propose_one(payload: tuple[str, int]) -> None:
+    state_path, index = payload
+    ImprovementQueue(Path(state_path)).propose(f"area{index}", f"summary{index}", f"evidence{index}")
+
+
+class ImprovementQueueConcurrencyTests(unittest.TestCase):
+    def test_concurrent_proposes_do_not_lose_updates(self) -> None:
+        import json
+        import multiprocessing
+
+        count = 24
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            state_path = Path(temporary_directory) / "improvement.json"
+            ImprovementQueue(state_path)  # validate configuration up front
+            with multiprocessing.Pool(min(8, count)) as pool:
+                pool.map(_propose_one, [(str(state_path), index) for index in range(count)])
+            candidates = json.loads(state_path.read_text(encoding="utf-8"))["candidates"]
+            # Without locking the read-modify-write, concurrent writers clobber
+            # each other and some proposals are silently lost.
+            self.assertEqual(count, len(candidates))
