@@ -26,16 +26,16 @@ Antigravity 구독 로그인은 API 키가 아니다. Hub는 이를 LangMem의 �
 ## 사용법
 
 ```bash
-agent-hub memory-candidate extract-cli \
-  --hub-root /home/sungt/agent-hub \
+agent-hub memory-candidate --hub-root /home/sungt/agent-hub \
+  extract-cli \
   --scope personal \
   --task-id task-... \
   --trigger explicit-request \
   --evidence "owner requested durable preference extraction" \
   --messages-file messages.json
 
-agent-hub memory-candidate list --hub-root /home/sungt/agent-hub --scope personal
-agent-hub memory-candidate promote --hub-root /home/sungt/agent-hub --id candidate-...
+agent-hub memory-candidate --hub-root /home/sungt/agent-hub list --scope personal
+agent-hub memory-candidate --hub-root /home/sungt/agent-hub promote --id candidate-...
 ```
 
 `messages.json`은 message object 배열이다. 민감한 원문은 넣지 않는다.
@@ -56,8 +56,8 @@ handoff한다. 일반 실패나 품질 검증 실패는 재실행하지 않는�
 도구 요약 JSON을 덧붙이는 경우, Hub는 첫 번째의 완전한 엄격 후보 문서만 허용한다.
 
 ```bash
-agent-hub memory-candidate extract-routed-cli \
-  --hub-root /home/sungt/agent-hub \
+agent-hub memory-candidate --hub-root /home/sungt/agent-hub \
+  extract-routed-cli \
   --scope personal --task-id task-... \
   --provider antigravity --trigger explicit-request \
   --evidence "owner requested durable preference extraction" \

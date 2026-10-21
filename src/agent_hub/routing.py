@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
+from .file_lock import exclusive_lock
 from .providers import ProviderCapability
 
 
@@ -67,14 +68,17 @@ class ProviderRouter:
             raise ValueError(f"Unsupported provider: {provider}")
         if cooldown_seconds is not None and cooldown_seconds < 1:
             raise ValueError("Cooldown override must be positive.")
-        health = self._load()
         timestamp = at or utc_now()
         item: dict[str, str] = {"last_status": status, "updated_at": timestamp.isoformat()}
         if status in {"limited", "unavailable", "timed_out", "empty"}:
             duration = cooldown_seconds if status == "limited" and cooldown_seconds is not None else self.cooldown_seconds
             item["cooldown_until"] = (timestamp + timedelta(seconds=duration)).isoformat()
-        health[provider] = item
-        self._write(health)
+        # Codex- and Claude-driven dispatches share this file; serialise the
+        # read-modify-write so one provider's cooldown is never lost.
+        with exclusive_lock(self.state_path.with_suffix(self.state_path.suffix + ".lock")):
+            health = self._load()
+            health[provider] = item
+            self._write(health)
 
     def _load(self) -> dict[str, dict[str, str]]:
         if not self.state_path.exists():

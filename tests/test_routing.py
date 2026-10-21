@@ -44,3 +44,36 @@ class ProviderRouterTests(unittest.TestCase):
             ]
             self.assertEqual("codex", router.select(capabilities, "antigravity", time + timedelta(hours=1)).provider)
             self.assertEqual("antigravity", router.select(capabilities, "antigravity", time + timedelta(days=1, seconds=1)).provider)
+
+    def test_concurrent_health_updates_are_serialised(self) -> None:
+        import threading
+        import time as clock
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            router = ProviderRouter(Path(temporary_directory) / "provider-health.json")
+            original = ProviderRouter._load
+            active = [0]
+            peak = [0]
+            guard = threading.Lock()
+
+            def slow_load(instance: ProviderRouter) -> dict[str, dict[str, str]]:
+                with guard:
+                    active[0] += 1
+                    peak[0] = max(peak[0], active[0])
+                try:
+                    value = original(instance)
+                    clock.sleep(0.05)
+                    return value
+                finally:
+                    with guard:
+                        active[0] -= 1
+
+            with patch.object(ProviderRouter, "_load", slow_load):
+                threads = [threading.Thread(target=router.record_result, args=(provider, "limited")) for provider in ("codex", "claude")]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+            self.assertEqual(1, peak[0])
+            self.assertEqual({"codex", "claude"}, set(router._load()))

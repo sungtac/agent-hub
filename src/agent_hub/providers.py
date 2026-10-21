@@ -67,6 +67,17 @@ def platform_command(command: list[str]) -> list[str]:
     return command
 
 
+def reject_option_like_prompt(prompt: str) -> None:
+    """Refuse a prompt that a provider CLI would parse as a command-line option.
+
+    The prompt is a separate argv element, so a leading ``-`` would let the
+    prompt text change sandbox or permission flags instead of being read.
+    """
+
+    if prompt.startswith("-"):
+        raise ProviderExecutionError("Prompt must not begin with '-'; it would be parsed as a provider CLI option.")
+
+
 def provider_environment(provider: str, inherited: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return a child-process environment without other providers' profile overrides.
 
@@ -117,6 +128,7 @@ class CodexAdapter:
             raise ProviderExecutionError("Codex CLI was not detected.")
         if not prompt.strip():
             raise ProviderExecutionError("Prompt must not be empty.")
+        reject_option_like_prompt(prompt)
         directory = working_directory.expanduser().resolve(strict=False)
         if not directory.is_dir():
             raise ProviderExecutionError(f"Working directory does not exist: {directory}")
@@ -136,7 +148,7 @@ class CodexAdapter:
                 prompt,
             ]
             try:
-                process = subprocess.Popen(platform_command(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.environment)
+                process = subprocess.Popen(platform_command(command), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.environment)
             except (OSError, ProviderExecutionError) as error:
                 return ExecutionResult(self.provider, "failed", None, None, (), truncate(str(error)))
             try:
@@ -206,9 +218,16 @@ class TemplateCliAdapter:
         directory = working_directory.expanduser().resolve(strict=False)
         if not directory.is_dir():
             raise ProviderExecutionError(f"Working directory does not exist: {directory}")
-        command = [self.executable, *[part.replace("{prompt}", prompt).replace("{cwd}", str(directory)) for part in self.command_template]]
+        if "{prompt}" in self.command_template:
+            # A standalone prompt argument is parsed by the provider CLI as an
+            # option when it starts with "-"; an embedded one (--print=...) is not.
+            reject_option_like_prompt(prompt)
+        values = {"prompt": prompt, "cwd": str(directory)}
+        # Substitute in one pass so placeholder-like text inside the prompt is
+        # passed through verbatim instead of being expanded.
+        command = [self.executable, *[re.sub(r"\{(prompt|cwd)\}", lambda match: values[match.group(1)], part) for part in self.command_template]]
         try:
-            completed = subprocess.run(platform_command(command), capture_output=True, text=True, timeout=timeout_seconds, check=False, cwd=directory, env=self.environment)
+            completed = subprocess.run(platform_command(command), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout_seconds, check=False, cwd=directory, env=self.environment)
         except subprocess.TimeoutExpired as error:
             return ExecutionResult(self.provider, "timed_out", None, None, (), truncate((error.stderr or "") if isinstance(error.stderr, str) else ""))
         except (OSError, ProviderExecutionError) as error:
@@ -230,6 +249,8 @@ class JsonCliAdapter(TemplateCliAdapter):
             return result
         try:
             payload = json.loads(result.final_message or "")
+            if not isinstance(payload, dict):
+                return ExecutionResult(result.provider, "failed", result.return_code, None, result.events, result.diagnostic or "Provider returned invalid structured output.")
             message = payload.get(self.result_key)
             if isinstance(message, str) and message.strip():
                 return ExecutionResult(result.provider, result.status, result.return_code, message, result.events, result.diagnostic)
@@ -307,4 +328,6 @@ def limited_retry_after_seconds(*messages: str) -> int | None:
     if match is None or not any(match.group(name) for name in ("days", "hours", "minutes", "seconds")):
         return None
     factors = {"days": 86_400, "hours": 3_600, "minutes": 60, "seconds": 1}
-    return sum(int(match.group(name) or 0) * factor for name, factor in factors.items())
+    seconds = sum(int(match.group(name) or 0) * factor for name, factor in factors.items())
+    # "Resets in 0s" carries no usable delay; the router's default applies.
+    return seconds or None

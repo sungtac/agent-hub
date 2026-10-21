@@ -36,10 +36,11 @@ def run_review(ledger: TaskLedger, task_id: str, role: str, changes: dict[str, s
         if result.status == "succeeded" and result.final_message:
             try:
                 payload = json.loads(result.final_message)
-                decision = payload.get("review_decision")
-                returned = payload.get("candidate_sha256")
             except json.JSONDecodeError:
-                decision = returned = None
+                payload = None
+            # Model output is untrusted: a non-object reply is simply not a receipt.
+            decision = payload.get("review_decision") if isinstance(payload, dict) else None
+            returned = payload.get("candidate_sha256") if isinstance(payload, dict) else None
             if returned == digest and decision in {"pass", "return_to_design"}:
                 ledger.record_review_receipt(task_id, lease["lease_id"], lease["generation"], role, adapter.provider, digest, decision, hashlib.sha256(result.final_message.encode("utf-8")).hexdigest())
         return result

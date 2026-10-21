@@ -249,3 +249,23 @@ class OrchestrationTests(unittest.TestCase):
             router = ProviderRouter(directory / "provider-health.json")
             with self.assertRaises(RuntimeError):
                 run_routed_task(ledger, router, {"antigravity": MismatchedAdapter()}, task["task_id"], "ready", directory)
+
+    def test_zero_quota_reset_hint_does_not_crash_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            tasks = directory / "tasks"
+            tasks.mkdir()
+            ledger = TaskLedger(tasks)
+            task = ledger.create_task("Zero reset", "personal")
+            decision, result = run_routed_task(
+                ledger,
+                ProviderRouter(directory / "provider-health.json"),
+                {"claude": FakeAdapter("claude", "limited", "usage limit reached. Resets in 0s"), "codex": FakeAdapter("codex")},
+                task["task_id"],
+                "continue safely",
+                directory,
+                requested_provider="claude",
+            )
+            self.assertEqual("codex", decision.provider)
+            self.assertEqual("succeeded", result.status)
+            self.assertIsNone(ledger.get_task(task["task_id"])["lease"])

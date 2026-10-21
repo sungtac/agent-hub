@@ -15,7 +15,7 @@ from .compatibility import assess, serialise_results
 from .backup import create_backup, restore_backup, verify_backup
 from .configuration import ConfigurationError, initialise_hub, load_configuration
 from .environment import build_report
-from .ledger import LedgerError, TaskLedger
+from .ledger import SENSITIVE_HANDOFF, LedgerError, TaskLedger
 from .knowledge import KnowledgeStore
 from .memory_candidates import MemoryCandidateStore, extract_langmem_candidates
 from .improvement import ImprovementQueue
@@ -781,6 +781,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         raise ValueError("Natural orchestrator switch requires --task-id, an explicit --provider, and --instruction.")
                     if not 1 <= args.provider_timeout_seconds <= 120:
                         raise ValueError("Provider timeout must be between 1 and 120 seconds.")
+                    if SENSITIVE_HANDOFF.search(args.instruction):
+                        raise PermissionError("Potential credential or identifier in the switch instruction; nothing was sent to a provider.")
                     if args.switch_id is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", args.switch_id):
                         raise ValueError("Switch ID must be 1-128 letters, digits, dots, underscores or hyphens.")
                     channel = "orchestrator-switch"

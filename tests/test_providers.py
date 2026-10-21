@@ -153,3 +153,61 @@ class CodexAdapterTests(unittest.TestCase):
                 platform_command(["C:/tools/provider.cmd", "--print=hello & unsafe"])
             with self.assertRaises(ProviderExecutionError):
                 platform_command(["C:/tools/PROVIDER.BAT", "--print=hello & unsafe"])
+
+    def test_zero_quota_reset_hint_is_not_a_cooldown(self) -> None:
+        self.assertIsNone(limited_retry_after_seconds("usage limit reached. Resets in 0s"))
+        self.assertIsNone(limited_retry_after_seconds("Resets in 0h0m0s"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX script fixture is not a native Windows executable")
+    def test_prompt_placeholder_text_is_passed_verbatim(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            executable = self.make_fake_codex(directory, "import json, sys\nprint(json.dumps({'result': sys.argv[-1]}))\n")
+            adapter = JsonCliAdapter("claude", str(executable), ("--cd", "{cwd}", "{prompt}"), "result")
+            self.assertEqual("keep {cwd} and {prompt} literal", adapter.execute("keep {cwd} and {prompt} literal", directory).final_message)
+
+    @unittest.skipIf(os.name == "nt", "POSIX script fixture is not a native Windows executable")
+    def test_non_object_structured_output_is_failed_not_a_crash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            executable = self.make_fake_codex(directory, "print('[\"result\"]')\n")
+            self.assertEqual("failed", JsonCliAdapter("claude", str(executable), ("{prompt}",), "result").execute("review", directory).status)
+
+    @unittest.skipIf(os.name == "nt", "POSIX script fixture is not a native Windows executable")
+    def test_option_like_prompt_is_refused_before_any_provider_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            marker = directory / "started"
+            executable = self.make_fake_codex(directory, f"import pathlib\npathlib.Path({str(marker)!r}).write_text('x')\nprint('{{\"result\": \"ok\"}}')\n")
+            for adapter in (CodexAdapter(str(executable)), claude_adapter(str(executable))):
+                with self.assertRaises(ProviderExecutionError):
+                    adapter.execute("--permission-mode=bypassPermissions", directory)
+            self.assertFalse(marker.exists())
+            # An embedded placeholder (--print={prompt}) cannot be reparsed as an option.
+            embedded = JsonCliAdapter("antigravity", str(executable), ("--print={prompt}",), "result")
+            self.assertEqual("succeeded", embedded.execute("- bullet item", directory).status)
+
+    @unittest.skipIf(not Path("/proc/self/fd/0").exists(), "requires /proc to inspect the child stdin")
+    def test_provider_children_never_inherit_the_callers_stdin(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            body = (
+                "import json, os, pathlib, sys\n"
+                "source = os.readlink('/proc/self/fd/0')\n"
+                "if '--output-last-message' in sys.argv:\n"
+                "    pathlib.Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text(source)\n"
+                "print(json.dumps({'result': source}))\n"
+            )
+            executable = self.make_fake_codex(directory, body)
+            read_end, write_end = os.pipe()
+            saved = os.dup(0)
+            try:
+                os.dup2(read_end, 0)
+                codex = CodexAdapter(str(executable)).execute("reply", directory)
+                claude = claude_adapter(str(executable)).execute("reply", directory)
+            finally:
+                os.dup2(saved, 0)
+                for descriptor in (saved, read_end, write_end):
+                    os.close(descriptor)
+            self.assertEqual(os.devnull, codex.final_message)
+            self.assertEqual(os.devnull, claude.final_message)
