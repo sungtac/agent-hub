@@ -74,3 +74,15 @@ class MultiAgentImprovementTests(unittest.TestCase):
             run_missing_reviews(ledger, task["task_id"], changes, root, 10, {"codex": codex, "claude": claude})
             self.assertEqual(1, codex.calls)
             self.assertEqual(1, claude.calls)
+
+    def test_non_object_review_reply_is_not_a_receipt_and_releases_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory); tasks = root / "tasks"; tasks.mkdir()
+            ledger = TaskLedger(tasks); task = ledger.create_task("malformed", "personal")
+            changes = {"src/agent_hub/example.py": "VALUE = 1\n"}
+            for reply in (["pass"], "pass", 7):
+                result = run_review(ledger, task["task_id"], "codex-main", changes, ReviewAdapter("codex", reply), root)
+                self.assertEqual("succeeded", result.status)
+            snapshot = ledger.get_task(task["task_id"])
+            self.assertEqual([], snapshot["review_receipts"])
+            self.assertIsNone(snapshot["lease"])

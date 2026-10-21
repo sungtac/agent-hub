@@ -42,12 +42,30 @@ PROTECTED_FILES = {
     "src/agent_hub/sandbox.py",
     "src/agent_hub/skills.py",
     "src/agent_hub/workflow.py",
+    # The improvement trust path itself, dispatch budgets, provider-switch
+    # rules, scheduling and policy state must never self-promote unreviewed by
+    # the owner (IMPLEMENTATION_PLAN.md "Bounded autonomous improvement").
+    "src/agent_hub/discovery.py",
+    "src/agent_hub/file_lock.py",
+    "src/agent_hub/improvement_review.py",
+    "src/agent_hub/loadout_bridge.py",
+    "src/agent_hub/loadout_manager.py",
+    "src/agent_hub/multiagent_improvement.py",
+    "src/agent_hub/natural_language.py",
+    "src/agent_hub/observer.py",
+    "src/agent_hub/provider_gateway.py",
+    "src/agent_hub/scheduler.py",
+    "src/agent_hub/subscription_langchain.py",
+    "src/agent_hub/subscription_memory.py",
+    "src/agent_hub/subscription_policy.py",
 }
 
 
 def requires_approval(changes: Mapping[str, str]) -> bool:
     """Classify by actual target paths, never by a caller-supplied area label."""
-    return any(name in PROTECTED_FILES for name in changes)
+    # Normalise so "src/agent_hub//cli.py" or "src/agent_hub/./cli.py" cannot
+    # address a protected file under an unlisted spelling.
+    return any(name in PROTECTED_FILES or PurePosixPath(name).as_posix() in PROTECTED_FILES for name in changes)
 
 
 @dataclass(frozen=True)
@@ -210,7 +228,7 @@ class SandboxImprovementRunner:
         names = sorted(changes)
         for name in names:
             relative = PurePosixPath(name)
-            if relative.is_absolute() or ".." in relative.parts or not name.startswith("src/agent_hub/") or (name in PROTECTED_FILES and name not in approved_paths):
+            if relative.is_absolute() or ".." in relative.parts or relative.as_posix() != name or not name.startswith("src/agent_hub/") or (name in PROTECTED_FILES and name not in approved_paths):
                 raise PermissionError(f"Automatic source change is outside the allowed area: {name}")
             target = root.joinpath(*relative.parts)
             if any(part.is_symlink() for part in (target, *target.parents)) or not target.is_file():

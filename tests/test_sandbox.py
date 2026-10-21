@@ -114,3 +114,24 @@ class SandboxImprovementTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 runner.run(root, "candidate-race", "quality", {"src/agent_hub/value.py": "VALUE = 2\n"}, root / "backups", expected_before=before)
             self.assertEqual("VALUE = 99\n", target.read_text(encoding="utf-8"))
+
+
+class ProtectedPathPolicyTests(unittest.TestCase):
+    def test_non_canonical_spelling_cannot_bypass_protected_file_approval(self) -> None:
+        from agent_hub.sandbox import requires_approval
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "src" / "agent_hub").mkdir(parents=True)
+            (root / "src" / "agent_hub" / "cli.py").write_text("VALUE = 1\n", encoding="utf-8")
+            for name in ("src/agent_hub//cli.py", "src/agent_hub/./cli.py"):
+                self.assertTrue(requires_approval({name: "VALUE = 2\n"}))
+                with self.assertRaises(PermissionError):
+                    SandboxImprovementRunner._validate_changes(root, {name: "VALUE = 2\n"}, frozenset({name}))
+
+    def test_improvement_trust_path_requires_owner_approval(self) -> None:
+        from agent_hub.sandbox import requires_approval
+
+        for module in ("multiagent_improvement", "improvement_review", "observer", "discovery", "provider_gateway", "scheduler", "subscription_policy", "natural_language", "file_lock"):
+            self.assertTrue(requires_approval({f"src/agent_hub/{module}.py": ""}), module)
+        self.assertFalse(requires_approval({"src/agent_hub/value.py": ""}))

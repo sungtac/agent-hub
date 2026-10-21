@@ -79,7 +79,7 @@ def discover(adapter: ReadOnlyAdapter, root: Path, timeout_seconds: float = 120.
     if result.status != "succeeded" or not result.final_message: return result, None
     try: finding = json.loads(result.final_message)
     except json.JSONDecodeError: return result, None
-    if not all(isinstance(finding.get(key), str) and finding[key].strip() for key in ("summary", "evidence", "area")): return result, None
+    if not isinstance(finding, dict) or not all(isinstance(finding.get(key), str) and finding[key].strip() for key in ("summary", "evidence", "area")): return result, None
     finding["fingerprint"] = fingerprint
     finding["finding_id"] = hashlib.sha256(json.dumps(finding, sort_keys=True).encode()).hexdigest()[:20]
     return result, finding
@@ -98,12 +98,13 @@ def draft(adapter: ReadOnlyAdapter, root: Path, finding: dict[str, Any], timeout
     if result.status != "succeeded" or not result.final_message: return result, None
     try: proposal = json.loads(result.final_message)
     except json.JSONDecodeError: return result, None
+    if not isinstance(proposal, dict): return result, None
     changes = proposal.get("changes")
     if proposal.get("finding_id") != finding.get("finding_id") or proposal.get("fingerprint") != fingerprint or not isinstance(changes, dict) or not changes:
         return result, None
     for name, body in changes.items():
         relative = PurePosixPath(name)
-        if not isinstance(body, str) or relative.is_absolute() or ".." in relative.parts or not name.startswith("src/agent_hub/") or not (root / name).is_file():
+        if not isinstance(body, str) or relative.is_absolute() or ".." in relative.parts or relative.as_posix() != name or not name.startswith("src/agent_hub/") or not (root / name).is_file():
             return result, None
     proposal["proposal_id"] = hashlib.sha256(json.dumps(proposal, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
     return result, proposal
