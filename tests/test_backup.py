@@ -59,6 +59,34 @@ class BackupTests(unittest.TestCase):
                     archive.addfile(info, io.BytesIO(contents))
             self.assertFalse(verify_backup(archive_path))
 
+    def test_verifier_rejects_windows_drive_member_with_valid_digest(self) -> None:
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            archive_path = Path(temporary_directory) / "drive.tar.gz"
+            payload = b"payload"
+            # On Windows root.joinpath("config", "D:", "evil") resolves to "D:evil".
+            name = "config/D:/evil"
+            manifest = json.dumps({"files": {name: hashlib.sha256(payload).hexdigest()}}).encode()
+            with tarfile.open(archive_path, "w:gz") as archive:
+                for member, contents in ((name, payload), ("manifest.json", manifest)):
+                    info = tarfile.TarInfo(member)
+                    info.size = len(contents)
+                    archive.addfile(info, io.BytesIO(contents))
+            self.assertFalse(verify_backup(archive_path))
+
+    def test_backup_destination_inside_snapshotted_state_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "config").mkdir()
+            (root / "config" / "hub.json").write_text("{}", encoding="utf-8")
+            (root / "runtime" / "state").mkdir(parents=True)
+            (root / "runtime" / "state" / "s.json").write_text("x" * 100_000, encoding="utf-8")
+            # Previously this produced an archive that captured itself and failed verification.
+            with self.assertRaises(ValueError):
+                create_backup(root, root / "runtime" / "state" / "self.tar.gz")
+            self.assertFalse((root / "runtime" / "state" / "self.tar.gz").exists())
+
     def test_verifier_rejects_malformed_archive_without_raising(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             archive_path = Path(temporary_directory) / "malformed.tar.gz"

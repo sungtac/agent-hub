@@ -48,6 +48,12 @@ class ProviderGateway:
     ) -> GatewayDispatch:
         if not prompt.strip():
             raise ValueError("Gateway prompt must not be empty.")
+        # Refuse a prompt that any routable adapter would reject before the
+        # durable reservation; otherwise the refusal would burn the budget.
+        for adapter in self._adapters.values():
+            validate = getattr(adapter, "validate_prompt", None)
+            if validate is not None:
+                validate(prompt)
         try:
             self._ledger.reserve_dispatch(task_id, channel, maximum)
         except DispatchLimitError:

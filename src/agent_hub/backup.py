@@ -20,6 +20,10 @@ def create_backup(hub_root: Path, destination: Path) -> Path:
     if output.exists() or not output.parent.is_dir():
         raise ValueError("Backup destination must be a new file in an existing directory.")
     members = [path for path in (root / "config", root / "runtime" / "tasks", root / "runtime" / "knowledge", root / "runtime" / "state") if path.exists()]
+    # An archive written inside a snapshotted directory would capture itself
+    # half-written and could never verify.
+    if any(output.parent == member.resolve() or member.resolve() in output.parents for member in members):
+        raise ValueError("Backup destination must not be inside a directory that is being backed up.")
     manifest: dict[str, object] = {"created_at": datetime.now(timezone.utc).isoformat(), "files": {}}
     with tarfile.open(output, "x:gz") as archive:
         for member in members:
@@ -112,7 +116,9 @@ def restore_backup(archive_path: Path, hub_root: Path, apply: bool = False) -> d
 def _safe_archive_path(name: str) -> bool:
     path = PurePosixPath(name)
     allowed = len(path.parts) >= 2 and (path.parts[0] == "config" or (path.parts[0] == "runtime" and path.parts[1] in {"tasks", "knowledge", "state"}))
-    return bool(allowed and not path.is_absolute() and ".." not in path.parts and "\\" not in name)
+    # ":" would let a member such as "config/D:/x" join to another drive on
+    # Windows (Path("C:/hub").joinpath("config", "D:", "x") == "D:x").
+    return bool(allowed and not path.is_absolute() and ".." not in path.parts and "\\" not in name and ":" not in name)
 
 
 def _safe_target(root: Path, name: str) -> Path:

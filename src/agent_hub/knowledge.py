@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .file_lock import exclusive_lock
+from .ledger import fsync_directory
 
 
 SCOPES = {"company", "personal", "shared", "quarantine"}
@@ -80,9 +81,12 @@ class KnowledgeStore:
                 tombstone,
                 json.dumps({"scope": scope, "id": identifier, "deleted_at": now(), "content_sha256": digest}, ensure_ascii=False, indent=2) + "\n",
             )
+            # The tombstone is the receipt; the content itself must be gone
+            # (IMPLEMENTATION_PLAN "Knowledge Mesh and deletion").  Renaming
+            # left every version readable on disk and in later backups.
             for version in self._versions(directory):
-                source = directory / f"v{version}.md"
-                source.rename(directory / f"v{version}.deleted")
+                (directory / f"v{version}.md").unlink()
+            fsync_directory(directory)
             with self._connection() as connection:
                 connection.execute("UPDATE knowledge SET status = 'deleted', content = '' WHERE scope = ? AND identifier = ?", (scope, identifier))
             return tombstone

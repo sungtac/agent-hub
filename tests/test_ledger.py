@@ -31,6 +31,21 @@ class TaskLedgerTests(unittest.TestCase):
         self.assertEqual("Read-only review", restored["title"])
         self.assertTrue((task_dir / "task.json").is_file())
 
+    def test_torn_final_append_does_not_brick_the_task(self) -> None:
+        temporary_directory, ledger = self.make_ledger()
+        self.addCleanup(temporary_directory.cleanup)
+        created = ledger.create_task("Crash during append", "personal")
+        events = ledger.tasks_root / created["task_id"] / "events.jsonl"
+        # A crash mid-write leaves an unterminated fragment (here ending inside
+        # a multi-byte character); it was never acknowledged to any caller.
+        with events.open("ab") as stream:
+            stream.write('{"event_type": "approval_recorded", "subject": "\uc6d0'.encode("utf-8")[:-1])
+        self.assertEqual(1, ledger.get_task(created["task_id"])["event_count"])
+        approved = ledger.record_approval(created["task_id"], "deploy", "approved")
+        self.assertEqual(2, approved["event_count"])
+        self.assertTrue(events.read_bytes().endswith(b"\n"))
+        self.assertEqual(2, len(events.read_bytes().splitlines()))
+
     def test_lease_generation_rejects_stale_release(self) -> None:
         temporary_directory, ledger = self.make_ledger()
         self.addCleanup(temporary_directory.cleanup)

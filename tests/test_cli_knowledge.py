@@ -372,3 +372,41 @@ class KnowledgeCliTests(unittest.TestCase):
             result = json.loads(output.getvalue())
             self.assertEqual("skill_catalog", result["intent"])
             self.assertIsInstance(result["skills"], list)
+
+
+class LoadoutBindConcurrencyTests(unittest.TestCase):
+    def test_concurrent_binds_create_exactly_one_hub_task(self) -> None:
+        import threading
+        import time
+
+        from agent_hub.ledger import TaskLedger
+        from agent_hub.loadout_bridge import LoadoutBridgeError, bind_task
+
+        class SlowLedger(TaskLedger):
+            def create_task(self, title: str, scope: str) -> dict:
+                created = super().create_task(title, scope)
+                time.sleep(0.2)
+                return created
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "hub-tasks").mkdir()
+            task_file = root / "project" / "tasks" / "race" / "task.md"
+            task_file.parent.mkdir(parents=True)
+            task_file.write_text("```yaml\nagent_hub_task_id: N/A\n```\n", encoding="utf-8")
+            ledger = SlowLedger(root / "hub-tasks")
+            outcomes: list[str] = []
+
+            def bind() -> None:
+                try:
+                    outcomes.append(bind_task(ledger, root / "project", "race", "Race", "personal")["task_id"])
+                except LoadoutBridgeError:
+                    outcomes.append("refused")
+
+            threads = [threading.Thread(target=bind) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(1, outcomes.count("refused"))
+            self.assertEqual(1, len(list((root / "hub-tasks").glob("task-*"))))

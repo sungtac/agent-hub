@@ -39,3 +39,14 @@ class InitializationIsolationTests(unittest.TestCase):
             first = digest(config)
             self.assertEqual(0, run_silently(["init", "--hub-root", str(root)]))
             self.assertEqual(first, digest(config))
+
+
+class FeatureSimulationCoverageTests(unittest.TestCase):
+    def test_feature_simulation_runs_every_test_module(self) -> None:
+        import ast
+
+        root = Path(__file__).resolve().parents[1]
+        tree = ast.parse((root / "scripts" / "verify_feature_simulation.py").read_text(encoding="utf-8"))
+        listed = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.startswith("tests.test_")}
+        present = {f"tests.{path.stem}" for path in (root / "tests").glob("test_*.py")}
+        self.assertEqual(set(), present - listed)

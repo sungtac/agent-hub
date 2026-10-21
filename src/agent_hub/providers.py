@@ -78,6 +78,17 @@ def reject_option_like_prompt(prompt: str) -> None:
         raise ProviderExecutionError("Prompt must not begin with '-'; it would be parsed as a provider CLI option.")
 
 
+# Claude's CLI is ``claude [options] [command] [prompt]`` and its argument
+# parser dispatches the first operand to a subcommand when the name matches,
+# even after ``--``.  A prompt equal to one of these names would run that
+# command (``update``, ``install``, ``purge`` ...) instead of a read-only turn.
+CLAUDE_SUBCOMMANDS = frozenset({
+    "agents", "attach", "auth", "auto-mode", "doctor", "gateway", "help", "import", "install", "kill",
+    "logs", "mcp", "plugin", "plugins", "purge", "respawn", "rm", "setup-token", "stop", "ultrareview",
+    "update", "upgrade",
+})
+
+
 def provider_environment(provider: str, inherited: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return a child-process environment without other providers' profile overrides.
 
@@ -123,12 +134,16 @@ class CodexAdapter:
             return ProviderCapability(self.provider, "degraded", self.executable, None, truncate(completed.stderr))
         return ProviderCapability(self.provider, "available", self.executable, completed.stdout.strip(), None)
 
-    def execute(self, prompt: str, working_directory: Path, timeout_seconds: float = 120.0) -> ExecutionResult:
-        if self.executable is None:
-            raise ProviderExecutionError("Codex CLI was not detected.")
+    @staticmethod
+    def validate_prompt(prompt: str) -> None:
         if not prompt.strip():
             raise ProviderExecutionError("Prompt must not be empty.")
         reject_option_like_prompt(prompt)
+
+    def execute(self, prompt: str, working_directory: Path, timeout_seconds: float = 120.0) -> ExecutionResult:
+        if self.executable is None:
+            raise ProviderExecutionError("Codex CLI was not detected.")
+        self.validate_prompt(prompt)
         directory = working_directory.expanduser().resolve(strict=False)
         if not directory.is_dir():
             raise ProviderExecutionError(f"Working directory does not exist: {directory}")
@@ -145,6 +160,9 @@ class CodexAdapter:
                 str(directory),
                 "--output-last-message",
                 str(final_message_path),
+                # ``codex exec`` has subcommands (resume, fork, review, help);
+                # end option and subcommand parsing so the prompt stays a prompt.
+                "--",
                 prompt,
             ]
             try:
@@ -191,7 +209,7 @@ class TemplateCliAdapter:
     with a fake CLI before it is trusted for orchestration.
     """
 
-    def __init__(self, provider: str, executable: str | None, command_template: tuple[str, ...], environment: Mapping[str, str] | None = None) -> None:
+    def __init__(self, provider: str, executable: str | None, command_template: tuple[str, ...], environment: Mapping[str, str] | None = None, reserved_prompts: frozenset[str] = frozenset()) -> None:
         if not provider or not command_template or any(any(marker not in {"prompt", "cwd"} for marker in _placeholders(item)) for item in command_template):
             raise ValueError("Invalid provider template.")
         if sum(item.count("{prompt}") for item in command_template) != 1:
@@ -200,6 +218,7 @@ class TemplateCliAdapter:
         self.executable = executable or shutil.which(provider)
         self.command_template = command_template
         self.environment = provider_environment(provider, environment)
+        self.reserved_prompts = reserved_prompts
 
     def discover(self) -> ProviderCapability:
         if self.executable is None:
@@ -212,16 +231,23 @@ class TemplateCliAdapter:
             return ProviderCapability(self.provider, "degraded", self.executable, None, truncate(completed.stderr))
         return ProviderCapability(self.provider, "available", self.executable, completed.stdout.strip(), None)
 
+    def validate_prompt(self, prompt: str) -> None:
+        if not prompt.strip():
+            raise ProviderExecutionError("Prompt must not be empty.")
+        if "{prompt}" in self.command_template:
+            # A standalone prompt argument is parsed by the provider CLI as an
+            # option when it starts with "-"; an embedded one (--print=...) is not.
+            reject_option_like_prompt(prompt)
+            if prompt in self.reserved_prompts:
+                raise ProviderExecutionError("Prompt must not equal a provider CLI subcommand name; it would run that command.")
+
     def execute(self, prompt: str, working_directory: Path, timeout_seconds: float = 120.0) -> ExecutionResult:
         if self.executable is None or not prompt.strip():
             raise ProviderExecutionError("Provider CLI was not detected or prompt was empty.")
         directory = working_directory.expanduser().resolve(strict=False)
         if not directory.is_dir():
             raise ProviderExecutionError(f"Working directory does not exist: {directory}")
-        if "{prompt}" in self.command_template:
-            # A standalone prompt argument is parsed by the provider CLI as an
-            # option when it starts with "-"; an embedded one (--print=...) is not.
-            reject_option_like_prompt(prompt)
+        self.validate_prompt(prompt)
         values = {"prompt": prompt, "cwd": str(directory)}
         # Substitute in one pass so placeholder-like text inside the prompt is
         # passed through verbatim instead of being expanded.
@@ -239,8 +265,8 @@ class TemplateCliAdapter:
 class JsonCliAdapter(TemplateCliAdapter):
     """Explicit provider contract whose non-interactive result is JSON."""
 
-    def __init__(self, provider: str, executable: str | None, command_template: tuple[str, ...], result_key: str, environment: Mapping[str, str] | None = None) -> None:
-        super().__init__(provider, executable, command_template, environment)
+    def __init__(self, provider: str, executable: str | None, command_template: tuple[str, ...], result_key: str, environment: Mapping[str, str] | None = None, reserved_prompts: frozenset[str] = frozenset()) -> None:
+        super().__init__(provider, executable, command_template, environment, reserved_prompts)
         self.result_key = result_key
 
     def execute(self, prompt: str, working_directory: Path, timeout_seconds: float = 120.0) -> ExecutionResult:
@@ -263,7 +289,7 @@ def claude_adapter(executable: str | None = None) -> JsonCliAdapter:
     # Hub calls are bounded, read-only routing/review turns.  Explicit low
     # effort prevents a simple receipt check from consuming the entire wall
     # clock budget; substantive design work remains a Loadout worker task.
-    return JsonCliAdapter("claude", executable, ("--print", "--output-format", "json", "--permission-mode", "plan", "--permission-prompts", "none", "--effort", "low", "--no-session-persistence", "--safe-mode", "--restricted", "{prompt}"), "result")
+    return JsonCliAdapter("claude", executable, ("--print", "--output-format", "json", "--permission-mode", "plan", "--permission-prompts", "none", "--effort", "low", "--no-session-persistence", "--safe-mode", "--restricted", "{prompt}"), "result", reserved_prompts=CLAUDE_SUBCOMMANDS)
 
 
 def antigravity_adapter(executable: str | None = None) -> JsonCliAdapter:

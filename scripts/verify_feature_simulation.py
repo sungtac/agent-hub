@@ -17,11 +17,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FEATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("environment_and_initialization", ("tests.test_environment", "tests.test_initialization")),
-    ("ledger_and_provider_handoff", ("tests.test_ledger", "tests.test_providers", "tests.test_routing", "tests.test_orchestration")),
+    ("ledger_and_provider_handoff", ("tests.test_ledger", "tests.test_providers", "tests.test_routing", "tests.test_orchestration", "tests.test_provider_gateway")),
     ("approval_and_optional_integrations", ("tests.test_workflow", "tests.test_integrations", "tests.test_subscription_langchain")),
     ("knowledge_memory_and_skills", ("tests.test_knowledge", "tests.test_memory_candidates", "tests.test_subscription_memory", "tests.test_skills")),
-    ("loadout_natural_language_and_review", ("tests.test_loadout", "tests.test_natural_language", "tests.test_cli_knowledge", "tests.test_review")),
-    ("backup_and_bounded_self_improvement", ("tests.test_backup", "tests.test_improvement", "tests.test_observer", "tests.test_sandbox", "tests.test_scheduler")),
+    ("loadout_natural_language_and_review", ("tests.test_loadout", "tests.test_loadout_manager", "tests.test_natural_language", "tests.test_cli_knowledge", "tests.test_review")),
+    ("backup_and_bounded_self_improvement", ("tests.test_backup", "tests.test_improvement", "tests.test_observer", "tests.test_sandbox", "tests.test_scheduler", "tests.test_discovery", "tests.test_multiagent_improvement", "tests.test_improvement_e2e")),
 )
 
 
