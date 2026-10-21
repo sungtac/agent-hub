@@ -17,6 +17,9 @@ class KnowledgeStoreTests(unittest.TestCase):
             self.assertTrue(tombstone.is_file())
             with self.assertRaises(PermissionError):
                 store.read("personal", "note-1")
+            # Deletion must remove the content, not merely rename it.
+            leftovers = [path.name for path in Path(temporary_directory).rglob("*") if path.is_file() and b"private fact" in path.read_bytes()]
+            self.assertEqual([], leftovers)
 
     def test_update_search_and_explicit_scope_promotion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
