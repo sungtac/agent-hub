@@ -23,6 +23,12 @@ class ObserverScheduler:
         self.executable = executable.expanduser().resolve(strict=True)
         if not self.executable.is_file():
             raise ValueError("Agent Hub executable does not exist.")
+        # shlex.quote does not protect crontab syntax: a newline starts a new
+        # (untagged, never-disabled) cron entry and an unescaped "%" ends the
+        # command and feeds the remainder to stdin.
+        for path in (self.hub_root, self.executable):
+            if any(character in str(path) for character in "%\n\r"):
+                raise ValueError("Hub root and executable paths must not contain '%' or line breaks for crontab scheduling.")
         self.runner = runner
 
     def status(self) -> bool:

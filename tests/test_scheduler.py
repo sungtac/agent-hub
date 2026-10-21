@@ -47,3 +47,18 @@ class ObserverSchedulerTests(unittest.TestCase):
             scheduler = ObserverScheduler(root, executable, FakeCron())
             with self.assertRaises(ValueError):
                 scheduler.enable(4)
+
+
+class CrontabPathSafetyTests(unittest.TestCase):
+    def test_paths_that_break_crontab_syntax_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            for name in ("hub\n* * * * * touch injected", "hub%evil"):
+                root = Path(temporary_directory) / name
+                root.mkdir()
+                executable = root / "agent-hub"
+                executable.write_text("#!/bin/sh\n", encoding="utf-8")
+                cron = FakeCron("")
+                with self.assertRaises(ValueError):
+                    ObserverScheduler(root, executable, cron).enable(10)
+                # Nothing outside the tagged Hub lines may ever be written.
+                self.assertTrue(all(MARKER in line or "agent-hub-improvement-discovery" in line for line in cron.payload.splitlines()))
