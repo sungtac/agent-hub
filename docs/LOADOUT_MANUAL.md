@@ -84,7 +84,7 @@ Antigravity CLI의 로컬 도움말은 프로젝트 지침 파일 자동 발견 
 않으므로, 해당 CLI에서는 생성된 `.agent-hub/loadout.antigravity.md`를 명시적으로
 읽히게 하거나 Hub 자연어 명령으로 전환을 요청해야 한다.
 
-`agent-hub loadout verify --hub-root HUB --project-root PROJECT`는 세 표준
+`agent-hub loadout --hub-root HUB verify --project-root PROJECT`는 세 표준
 오버레이를 수정하지 않고 `current`, `missing`, `stale`, `unmanaged`, `unsafe`로
 분류한다. `stale`만 `--replace-managed`로 갱신 대상이 될 수 있다.
 
