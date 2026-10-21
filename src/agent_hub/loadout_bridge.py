@@ -8,6 +8,7 @@ import tempfile
 from typing import Any
 from pathlib import Path
 
+from .file_lock import exclusive_lock
 from .ledger import LedgerError, TASK_ID_PATTERN, TaskLedger, fsync_directory
 
 
@@ -86,19 +87,23 @@ def bind_task(ledger: TaskLedger, project_root: Path, task_name: str, title: str
     second call path for the same human task.
     """
     task_file = _task_file(project_root, task_name)
-    content = task_file.read_text(encoding="utf-8")
-    match = _HUB_ID_LINE.search(content)
-    if match is None:
-        raise LoadoutBridgeError("Loadout task.md has no agent_hub_task_id field.")
-    current = _hub_id(content)
-    if current != "N/A":
-        if TASK_ID_PATTERN.fullmatch(current):
-            raise LoadoutBridgeError("Loadout task is already bound; rebinding is refused.")
-        raise LoadoutBridgeError("agent_hub_task_id must be N/A before binding.")
-    created = ledger.create_task(title, scope)
-    replacement = f"{match.group('prefix')}{created['task_id']}{match.group('comment')}"
-    updated = content[: match.start()] + replacement + content[match.end() :]
-    _atomic_write(task_file, updated)
+    # Serialise check-create-write: two concurrent binds of one N/A task would
+    # otherwise both create Hub tasks and the later write would silently
+    # replace the earlier binding.
+    with exclusive_lock(ledger.tasks_root / ".loadout-bind.lock"):
+        content = task_file.read_text(encoding="utf-8")
+        match = _HUB_ID_LINE.search(content)
+        if match is None:
+            raise LoadoutBridgeError("Loadout task.md has no agent_hub_task_id field.")
+        current = _hub_id(content)
+        if current != "N/A":
+            if TASK_ID_PATTERN.fullmatch(current):
+                raise LoadoutBridgeError("Loadout task is already bound; rebinding is refused.")
+            raise LoadoutBridgeError("agent_hub_task_id must be N/A before binding.")
+        created = ledger.create_task(title, scope)
+        replacement = f"{match.group('prefix')}{created['task_id']}{match.group('comment')}"
+        updated = content[: match.start()] + replacement + content[match.end() :]
+        _atomic_write(task_file, updated)
     return {"task_id": created["task_id"], "loadout_task": str(task_file)}
 
 
