@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .file_lock import exclusive_lock
+
 
 PROTECTED_AREAS = {"policy", "security", "budget", "provider-routing", "retention"}
 
@@ -31,6 +33,11 @@ class ImprovementQueue:
         self.max_promotions_per_day = max_promotions_per_day
         if not self.state_path.parent.is_dir() or max_promotions_per_day < 1:
             raise ValueError("Invalid improvement queue configuration.")
+        # Serialise read-modify-write so concurrent callers cannot clobber each
+        # other's updates. The observer holds its own lock, but the queue is a
+        # separate state file that promote() mutates outside that lock (and the
+        # queue may be driven directly), so it needs its own.
+        self.lock_path = self.state_path.with_suffix(self.state_path.suffix + ".lock")
 
     def propose(self, area: str, summary: str, evidence: str, at: datetime | None = None) -> ImprovementCandidate:
         # The observer classifies risk from the exact changed paths.  ``area``
@@ -39,42 +46,44 @@ class ImprovementQueue:
             raise ValueError("Candidate area, summary, and evidence are required.")
         timestamp = (at or datetime.now(timezone.utc)).isoformat()
         identifier = hashlib.sha256(f"{area}\n{summary}\n{evidence}".encode("utf-8")).hexdigest()[:20]
-        state = self._load()
-        cooldown = state["cooldowns"].get(area)
-        if cooldown:
-            try:
-                if datetime.fromisoformat(cooldown["until"]) > (at or datetime.now(timezone.utc)):
-                    raise PermissionError(f"Improvement area is cooling down: {area}")
-            except (KeyError, ValueError):
-                raise ValueError("Invalid improvement cooldown state.") from None
-        if identifier not in state["candidates"]:
-            state["candidates"][identifier] = {"area": area, "summary": summary, "evidence": evidence, "created_at": timestamp, "status": "candidate"}
-            self._write(state)
-        item = state["candidates"][identifier]
+        with exclusive_lock(self.lock_path):
+            state = self._load()
+            cooldown = state["cooldowns"].get(area)
+            if cooldown:
+                try:
+                    if datetime.fromisoformat(cooldown["until"]) > (at or datetime.now(timezone.utc)):
+                        raise PermissionError(f"Improvement area is cooling down: {area}")
+                except (KeyError, ValueError):
+                    raise ValueError("Invalid improvement cooldown state.") from None
+            if identifier not in state["candidates"]:
+                state["candidates"][identifier] = {"area": area, "summary": summary, "evidence": evidence, "created_at": timestamp, "status": "candidate"}
+                self._write(state)
+            item = state["candidates"][identifier]
         return ImprovementCandidate(identifier, item["area"], item["summary"], item["evidence"], item["created_at"])
 
     def promote(self, identifier: str, checks_passed: bool, at: datetime | None = None) -> str:
-        state = self._load()
-        candidate = state["candidates"].get(identifier)
-        if candidate is None or candidate["status"] != "candidate":
-            raise ValueError("Candidate is not eligible for promotion.")
-        if not checks_passed:
-            candidate["status"] = "rejected"
-            state["cooldowns"][candidate["area"]] = {
-                "until": ((at or datetime.now(timezone.utc)) + timedelta(minutes=240)).isoformat(),
-                "reason": "candidate checks failed",
-            }
+        with exclusive_lock(self.lock_path):
+            state = self._load()
+            candidate = state["candidates"].get(identifier)
+            if candidate is None or candidate["status"] != "candidate":
+                raise ValueError("Candidate is not eligible for promotion.")
+            if not checks_passed:
+                candidate["status"] = "rejected"
+                state["cooldowns"][candidate["area"]] = {
+                    "until": ((at or datetime.now(timezone.utc)) + timedelta(minutes=240)).isoformat(),
+                    "reason": "candidate checks failed",
+                }
+                self._write(state)
+                return "rejected"
+            date = (at or datetime.now(timezone.utc)).date().isoformat()
+            promoted_today = state["promotions"].get(date, [])
+            if len(promoted_today) >= self.max_promotions_per_day:
+                return "deferred"
+            candidate["status"] = "promoted"
+            promoted_today.append(identifier)
+            state["promotions"][date] = promoted_today
             self._write(state)
-            return "rejected"
-        date = (at or datetime.now(timezone.utc)).date().isoformat()
-        promoted_today = state["promotions"].get(date, [])
-        if len(promoted_today) >= self.max_promotions_per_day:
-            return "deferred"
-        candidate["status"] = "promoted"
-        promoted_today.append(identifier)
-        state["promotions"][date] = promoted_today
-        self._write(state)
-        return "promoted"
+            return "promoted"
 
     def get_candidate(self, identifier: str) -> dict[str, str]:
         candidate = self._load()["candidates"].get(identifier)
@@ -85,10 +94,11 @@ class ImprovementQueue:
     def set_cooldown(self, area: str, reason: str, seconds: int = 14_400, at: datetime | None = None) -> None:
         if not area.strip() or seconds < 1:
             raise ValueError("Invalid cooldown area or duration.")
-        state = self._load()
-        timestamp = at or datetime.now(timezone.utc)
-        state["cooldowns"][area] = {"until": (timestamp + timedelta(seconds=seconds)).isoformat(), "reason": reason}
-        self._write(state)
+        with exclusive_lock(self.lock_path):
+            state = self._load()
+            timestamp = at or datetime.now(timezone.utc)
+            state["cooldowns"][area] = {"until": (timestamp + timedelta(seconds=seconds)).isoformat(), "reason": reason}
+            self._write(state)
 
     def _load(self) -> dict[str, object]:
         if not self.state_path.exists():
