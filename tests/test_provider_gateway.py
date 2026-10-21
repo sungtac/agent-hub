@@ -123,3 +123,18 @@ class ProviderGatewayTests(unittest.TestCase):
             self.assertEqual(1, codex.calls)
             with self.assertRaises(DispatchLimitError):
                 gateway.dispatch(task_id=task["task_id"], channel="review", maximum=1, prompt="review", working_directory=root, requested_provider="codex")
+
+    def test_sensitive_switch_instruction_is_never_dispatched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            initialise_hub(root)
+            ledger = TaskLedger(root / 'runtime/tasks')
+            task_id = ledger.create_task('sensitive instruction', 'personal')['task_id']
+            claude, codex = FakeAdapter('claude'), FakeAdapter('codex')
+            with patch('agent_hub.cli.claude_adapter', return_value=claude), patch('agent_hub.cli.CodexAdapter', return_value=codex), patch('agent_hub.cli.antigravity_adapter', return_value=FakeAdapter('antigravity')):
+                with self.assertRaises(SystemExit):
+                    main(['natural', '--hub-root', str(root), '--text', '클로드를 오케스트레이터로 전환해줘', '--apply', '--task-id', task_id, '--provider', 'claude', '--instruction', 'continue with api_key=abc123', '--switch-id', 'one'])
+            self.assertEqual(0, claude.calls + codex.calls)
+            state = ledger.get_task(task_id)
+            self.assertEqual([], state['dispatches'])
+            self.assertEqual([], state['executions'])

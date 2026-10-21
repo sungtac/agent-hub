@@ -41,3 +41,7 @@ class NaturalLanguageTests(unittest.TestCase):
         self.assertEqual(["enable"], called)
         with self.assertRaises(PermissionError):
             execute_safe(interpret("이 대화 기억해줘"), lambda: None, lambda: None)
+
+    def test_switch_intent_accepts_every_provider_name_spelling(self) -> None:
+        for text in ("claude를 오케스트레이터로 전환해줘", "Claude를 오케스트레이터로 전환해줘", "클로드를 오케스트레이터로 전환해줘", "codex를 오케스트레이터로 전환해줘", "agy를 오케스트레이터로 전환해줘", "antigravity를 오케스트레이터로 전환해줘"):
+            self.assertEqual("provider_switch", interpret(text).intent, text)

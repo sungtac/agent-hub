@@ -11,6 +11,17 @@ into another provider, and never seize a live lease.
 If the overlay is absent, stop before changing configuration and tell the
 owner to generate a project overlay with `agent-hub loadout overlay`.
 
+## Architecture evidence gate
+
+Before stating that a capability is absent, incomplete, complete, or requires
+a new design, trace the complete execution path in this order: CLI entry point,
+durable state or task ledger, approval boundary, executor and rollback path,
+then the tests that prove the boundary. Cite the concrete files or tests used.
+
+If any link is not inspected, report it as unverified; do not infer an
+architecture conclusion from a subset of modules. Before proposing a new
+component, check for an existing path that already provides the behavior.
+
 ## Knowledge boundary
 
 For Hub-owned records that need scope separation, versions, approvals, or

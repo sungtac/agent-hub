@@ -43,7 +43,7 @@ def interpret(text: str, mode: str = "basic") -> NaturalRequest:
         return _request("improvement_disable", mode, True, (), "agent-hub improvement schedule disable", "Hub가 만든 observer scheduler 항목만 비활성화합니다.")
     if any(word in normalized for word in ("기억해", "기억 저장", "기억 추출")):
         return _request("memory_extract", mode, False, ("task_id", "scope", "message"), "agent-hub natural --text '기억해줘' --apply --task-id TASK --scope personal --message 'SAFE_TEXT'", "명시 요청 기억 추출로 해석했습니다. 범위, 작업 ID, 그리고 적재할 안전한 메시지가 필요합니다.")
-    if "오케스트레이터" in normalized and any(word in normalized for word in ("클로드", "코덱스", "codex", "안티", "antigravity")):
+    if "오케스트레이터" in normalized and any(word in normalized for word in ("클로드", "claude", "코덱스", "codex", "안티", "antigravity", "agy")):
         return _request("provider_switch", mode, False, ("task_id", "provider", "instruction"), "agent-hub natural --text '클로드를 오케스트레이터로' --apply --task-id TASK --provider claude --instruction 'CONTINUE_FROM_LEDGER'", "공급자 역할 전환으로 해석했습니다. task ID, 대상 provider, 그리고 원장 기준의 명시적 계속 작업 지시가 필요합니다.")
     return _request("guidance", mode, False, (), "agent-hub --help", "요청을 안전하게 특정할 수 없습니다. 기억 추출, 점검 리스트, 자가개선 켜기/끄기, 공급자 전환 중 하나로 표현해 주세요.")
 
