@@ -452,6 +452,7 @@ class TaskLedger:
     def _append_event(task_dir: Path, event: dict[str, Any]) -> None:
         event_path = task_dir / "events.jsonl"
         payload = json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+        TaskLedger._discard_torn_tail(event_path)
         with event_path.open("a", encoding="utf-8") as stream:
             stream.write(payload)
             stream.flush()
@@ -459,11 +460,39 @@ class TaskLedger:
         fsync_directory(task_dir)
 
     @staticmethod
+    def _discard_torn_tail(event_path: Path) -> None:
+        """Drop an unterminated final line left by a crash mid-append.
+
+        Every event is written as one newline-terminated line and fsynced, so a
+        trailing fragment without a newline was never acknowledged to a caller.
+        Callers hold the task lock.
+        """
+
+        try:
+            with event_path.open("rb+") as stream:
+                size = stream.seek(0, os.SEEK_END)
+                if size == 0:
+                    return
+                stream.seek(size - 1)
+                if stream.read(1) == b"\n":
+                    return
+                stream.seek(0)
+                data = stream.read()
+                stream.truncate(data.rfind(b"\n") + 1)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileNotFoundError:
+            return
+
+    @staticmethod
     def _replay(task_dir: Path) -> dict[str, Any]:
         events_path = task_dir / "events.jsonl"
         try:
-            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line]
-        except (OSError, json.JSONDecodeError) as error:
+            lines = events_path.read_bytes().split(b"\n")
+            # The last element is empty for a fully terminated log, or an
+            # unacknowledged torn append that is ignored (and later discarded).
+            events = [json.loads(line.decode("utf-8")) for line in lines[:-1] if line]
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise LedgerError(f"Could not replay task ledger: {task_dir}") from error
         if not events or events[0].get("event_type") != "task_created":
             raise LedgerError("Task ledger has no valid creation event.")
