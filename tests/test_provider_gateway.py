@@ -138,3 +138,23 @@ class ProviderGatewayTests(unittest.TestCase):
             state = ledger.get_task(task_id)
             self.assertEqual([], state['dispatches'])
             self.assertEqual([], state['executions'])
+
+
+class GatewayPromptValidationTests(unittest.TestCase):
+    def test_refused_prompt_does_not_consume_the_dispatch_budget(self) -> None:
+        from agent_hub.providers import CodexAdapter, ProviderExecutionError, claude_adapter
+
+        class Codex(CodexAdapter):
+            def discover(self) -> ProviderCapability:
+                return ProviderCapability("codex", "available", "codex", "test", None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            initialise_hub(root)
+            ledger = TaskLedger(root / "runtime/tasks")
+            task_id = ledger.create_task("switch", "personal")["task_id"]
+            gateway = ProviderGateway(ledger, ProviderRouter(root / "runtime/state/provider-health.json"), {"codex": Codex("/missing/codex"), "claude": claude_adapter("/missing/claude")})
+            for prompt in ("--sandbox=danger-full-access", "update"):
+                with self.assertRaises(ProviderExecutionError):
+                    gateway.dispatch(task_id=task_id, channel="orchestrator-switch", maximum=1, prompt=prompt, working_directory=root, requested_provider="codex")
+            self.assertEqual([], ledger.get_task(task_id)["dispatches"])

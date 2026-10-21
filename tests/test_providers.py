@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import stat
 import sys
@@ -186,6 +187,33 @@ class CodexAdapterTests(unittest.TestCase):
             # An embedded placeholder (--print={prompt}) cannot be reparsed as an option.
             embedded = JsonCliAdapter("antigravity", str(executable), ("--print={prompt}",), "result")
             self.assertEqual("succeeded", embedded.execute("- bullet item", directory).status)
+
+    @unittest.skipIf(os.name == "nt", "POSIX script fixture is not a native Windows executable")
+    def test_codex_prompt_cannot_be_parsed_as_an_exec_subcommand(self) -> None:
+        # `codex exec ... help` prints help and `resume`/`review` run other
+        # commands; the prompt must follow an explicit "--" separator.
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            executable = self.make_fake_codex(
+                directory,
+                "import json, pathlib, sys\n"
+                "out = pathlib.Path(sys.argv[sys.argv.index('--output-last-message') + 1])\n"
+                "out.write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
+            )
+            argv = json.loads(CodexAdapter(str(executable)).execute("help", directory).final_message)
+            self.assertEqual(["--", "help"], argv[-2:])
+
+    @unittest.skipIf(os.name == "nt", "POSIX script fixture is not a native Windows executable")
+    def test_claude_prompt_equal_to_a_subcommand_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            marker = directory / "started"
+            executable = self.make_fake_codex(directory, f"import pathlib\npathlib.Path({str(marker)!r}).write_text('x')\nprint('{{\"result\": \"ok\"}}')\n")
+            for prompt in ("update", "purge", "install"):
+                with self.assertRaises(ProviderExecutionError):
+                    claude_adapter(str(executable)).execute(prompt, directory)
+            self.assertFalse(marker.exists())
+            self.assertEqual("succeeded", claude_adapter(str(executable)).execute("please update the notes", directory).status)
 
     @unittest.skipIf(not Path("/proc/self/fd/0").exists(), "requires /proc to inspect the child stdin")
     def test_provider_children_never_inherit_the_callers_stdin(self) -> None:
