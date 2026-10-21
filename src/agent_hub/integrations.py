@@ -39,10 +39,19 @@ class ApprovalGuardedDeepAgent:
         decision: str,
         agent_input: Mapping[str, Any],
         config: Mapping[str, Any] | None = None,
+        *,
+        expected_request: str | None = None,
     ) -> dict[str, Any]:
         approval = self._workflow.resume(thread_id, decision)
         if approval.get("status") != "completed" or approval.get("already_finalized"):
             return {"approval": approval, "agent_invoked": False}
+        # Approval/request substitution guard: the caller may declare which
+        # request it believes the owner approved. If it does and the approval
+        # carries a different request, refuse to run the agent against this
+        # approval rather than silently honouring a substituted one. Omitting
+        # expected_request preserves the original behaviour.
+        if expected_request is not None and approval.get("request") != expected_request:
+            return {"approval": approval, "agent_invoked": False, "request_mismatch": True}
         return {
             "approval": approval,
             "agent_invoked": True,
@@ -125,8 +134,13 @@ def build_deep_agent(
     memory_sources: list[str] = []
     for index, path in enumerate(skill_paths):
         mount = f"/hub-skills-{index}"
-        routes[mount] = FilesystemBackend(root_dir=Path(path).parent)
-        skill_sources.append(f"{mount}/{Path(path).name}")
+        # Mount the skill directory itself, not its parent. Sibling skills
+        # share a parent, so rooting the backend at the parent would expose
+        # other skills — including unapproved or out-of-scope ones that
+        # build_scoped_deep_agent deliberately filtered out — to the
+        # read-only agent.
+        routes[mount] = FilesystemBackend(root_dir=Path(path))
+        skill_sources.append(mount)
     for index, path in enumerate(memory_paths):
         mount = f"/hub-memory-{index}"
         routes[mount] = FilesystemBackend(root_dir=Path(path).parent)

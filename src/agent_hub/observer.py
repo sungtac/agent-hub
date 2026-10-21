@@ -141,7 +141,16 @@ class ImprovementObserver:
             task = self.ledger.get_task(str(item["task_id"]))
         except Exception:
             return False
-        return any(entry["subject"] == item["approval_subject"] and entry["decision"] == "approved" for entry in task["approvals"])
+        # Approvals are an append-only event log, so a subject may carry an
+        # "approved" entry followed by a later "rejected" one when the owner
+        # revokes. Honour only the most recent decision for the subject;
+        # scanning for any "approved" entry would let a stale approval survive
+        # a revocation.
+        decision: str | None = None
+        for entry in task["approvals"]:
+            if entry["subject"] == item["approval_subject"]:
+                decision = entry["decision"]
+        return decision == "approved"
 
     def _load(self) -> dict[str, Any]:
         if not self.state_path.exists():

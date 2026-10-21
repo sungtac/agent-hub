@@ -125,3 +125,20 @@ class ImprovementObserverTests(unittest.TestCase):
             self.assertEqual(second, result["candidate_id"])
             self.assertEqual([(second, "quality", second_changes)], runner.calls)
             self.assertEqual("candidate", queue.get_candidate(first)["status"])
+
+    def test_revoked_approval_is_not_treated_as_approved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory); state = root / "state"; state.mkdir(); tasks = root / "tasks"; tasks.mkdir()
+            ledger = TaskLedger(tasks)
+            task = ledger.create_task("review", "personal")
+            subject = "improvement-v1:cand:" + "a" * 64
+            observer = ImprovementObserver(state / "observer.json", ImprovementQueue(state / "improvements.json"), FakeRunner(), root, root / "backups", ledger)
+            item = {"task_id": task["task_id"], "approval_subject": subject}
+            ledger.record_approval(task["task_id"], subject, "approved")
+            self.assertTrue(observer._approved(item))
+            # A later revocation for the same subject must win over the stale approval.
+            ledger.record_approval(task["task_id"], subject, "rejected")
+            self.assertFalse(observer._approved(item))
+            # A fresh re-approval takes effect again.
+            ledger.record_approval(task["task_id"], subject, "approved")
+            self.assertTrue(observer._approved(item))
